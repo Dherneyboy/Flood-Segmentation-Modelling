@@ -13,15 +13,18 @@ The model performs pixel-level classification, distinguishing flooded from non-f
 
 Dataset Name: Flood Area Segmentation Dataset
 
-Source: Kaggle
-Size: ~2.5 GB
-Contents:
+The dataset contains images of flood hit areas and corresponding mask images showing the water region.
 
-Satellite images (RGB)
+There are 290 images and self annoted masks. The mask images were created using Label Studio, an open source data labelling software. The task is to create a segmentation model, which can accurately segment out the water region in a given picture of a flood hit area.
 
-Corresponding binary masks (flooded = 1, non-flooded = 0)
+Such models cane be used for flood surveys, better decision-making and planning. Because of less data, pre-trained models and data augmentation may be used.
 
-Each mask aligns spatially with its RGB image, enabling supervised learning for segmentation tasks.
+Naviagate Dataset:
+Image: Folder containing all the flood images.
+Mask: Folder containing all the mask images.
+metadata.csv: A csv file mapping the image name with its mask.
+
+Link to dataset: https://www.kaggle.com/datasets/faizalkarim/flood-area-segmentation
 
 🧩 Project Structure
 
