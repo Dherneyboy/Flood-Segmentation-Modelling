@@ -1,48 +1,71 @@
-import ee
 import numpy as np
 import cv2
-import requests
-from PIL import Image
-from io import BytesIO
-import pandas as pd
+import streamlit as st
+import cv2
 
-def fetch_sentinel_rgb(lat, lon):
-    point = ee.Geometry.Point([lon, lat])
-    region = point.buffer(500).bounds()
-    
-    image = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED") \
-        .filterBounds(point) \
-        .filterDate('2026-01-01', '2026-04-14') \
-        .sort('CLOUDY_PIXEL_PERCENTAGE') \
-        .first() \
-        .select(['B4', 'B3', 'B2'])
-    
-    # Use sampleRectangle: This bypasses the Map Thumbnailer and gives you
-    # the raw spectral values in a structured dictionary.
-    data = image.sampleRectangle(region=region, defaultValue=0).getInfo()
-    
-    # Extract the arrays directly from the dictionary
-    b4 = np.array(data['properties']['B4'])
-    b3 = np.array(data['properties']['B3'])
-    b2 = np.array(data['properties']['B2'])
-    
-    # Stack them into an RGB image
-    img = np.dstack((b4, b3, b2))
-    
-    # Normalize: Sentinel SR values are typically 0-10000.
-    # We map this to 0-255 for OpenCV/Model compatibility.
-    img = np.clip(img / 3000 * 255, 0, 255).astype(np.uint8)
-    
-    # Resize to the input size your model expects (e.g., 512x512)
-    return cv2.resize(img, (512, 512))
+@st.cache_resource
+def open_camera(source):
+    """
+    Opens camera once and keeps it alive (important for Streamlit).
+    """
+    if str(source).isdigit():
+        source = int(source)
+
+    cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)  # FIX for Windows
+
+    return cap
+
+def get_camera_frame(source):
+    """
+    Reads a frame from an already opened camera.
+    """
+
+    try:
+        cap = open_camera(source)
+
+        if not cap.isOpened():
+            return None
+
+        ret, frame = cap.read()
+
+        if not ret or frame is None:
+            return None
+
+        frame = cv2.resize(frame, (512, 512))
+        return frame
+
+    except Exception:
+        return None
+
 
 def preprocess_for_model(image):
-    """Resizes and normalizes the image to match model input."""
+    """Resize and normalize image for model input."""
     img = cv2.resize(image, (128, 128))
     img = img.astype('float32') / 255.0
-    return np.expand_dims(img, axis=0) # Add batch dimension
+    return np.expand_dims(img, axis=0)
+
 
 def postprocess_mask(prediction):
-    """Converts model output probability map into a binary mask."""
-    mask = (prediction[0] > 0.50).astype(np.uint8) * 255
-    return mask
+    """
+    Converts model output probability map into a cleaner binary mask.
+    """
+
+    mask = (prediction[0] > 0.85).astype(np.uint8) * 255
+
+    mask = mask.squeeze()
+
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+
+    cleaned_mask = np.zeros_like(mask)
+
+    for i in range(1, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]
+
+        if area > 500:
+            cleaned_mask[labels == i] = 255
+
+    return cleaned_mask
