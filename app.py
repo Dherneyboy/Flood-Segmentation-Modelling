@@ -1,121 +1,159 @@
 import streamlit as st
 import numpy as np
 import cv2
-import folium
-from streamlit_folium import st_folium
-import ee
+import time
 
-# Import your custom modules
 from model import load_flood_model
-from utils import preprocess_for_model, postprocess_mask, fetch_sentinel_rgb
+from utils import preprocess_for_model, postprocess_mask, get_camera_frame
 
+st.set_page_config(page_title="AquaFlow", layout="wide")
 
-# --- INITIALIZATION ---
-
-try:
-    # Use the project ID you created in your Google Cloud Console
-    ee.Initialize(project='flood-detection-project-491814')
-except Exception as e:
-    st.error("Authentication failed. Please run 'earthengine authenticate' in your terminal.")
-    ee.Authenticate()
-    ee.Initialize(project='flood-detection-project-491814')
-
-# --- CUSTOM CSS FOR DARK PITCH UI ---
-st.markdown("""
+# --- CUSTOM CSS ---
+st.markdown(
+    """
     <style>
-    .stApp { background-color: #0e1117; color: #ffffff; }
-    .metric-card { background: rgba(255, 255, 255, 0.05); padding: 20px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.1); text-align: center; }
+    .stApp {
+        background-color: #0e1117;
+        color: white;
+    }
+
+    .camera-card {
+        background-color: rgba(255,255,255,0.03);
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.08);
+        margin-bottom: 15px;
+    }
     </style>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True
+)
+# --- LOAD MODEL ONCE ---
+@st.cache_resource
+def get_model():
+    return load_flood_model()
 
-def main():
-    st.title("🌊 AquaFlow: Multi-Source Flood Segmentation")
-    data_source = st.radio("Select Data Input Mode:", ["Live Sentinel-2 (Regional)", "Upload Local High-Res (Local)"])
-    
-    raw_image = None # Initialize empty
+model = get_model()
 
-    # 1. DATA ACQUISITION
-    if data_source == "Live Sentinel-2 (Regional)":
-        lat = st.number_input("Target Latitude", value=7.1500)
-        lon = st.number_input("Target Longitude", value=5.1200)
-        if st.button("🚀 Analyze Satellite Data"):
-            with st.spinner("🛰 Fetching Sentinel-2 Data..."):
-                raw_image = fetch_sentinel_rgb(lat, lon)
-    
-    else:
-        uploaded_file = st.file_uploader("Upload High-Res RGB Image", type=["png", "jpg", "jpeg"])
-        if uploaded_file:
-            # Convert uploaded file to OpenCV format
-            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-            raw_image = cv2.imdecode(file_bytes, 1)
-            st.image(raw_image, caption="Uploaded Imagery", use_container_width=True)
+# --- SIDEBAR CONFIGURATION ---
+with st.sidebar:
+    st.header("🛠 Camera Configuration")
 
-    # 2. UNIFIED ANALYSIS (This now runs for both sources!)
-    if raw_image is not None:
-        if st.button("🧠 Run AI Segmentation"):
-            with st.spinner("Processing model inference..."):
-                # Load model, preprocess, and predict
-                model = load_flood_model()
-                input_tensor = preprocess_for_model(raw_image)
-                prediction = model.predict(input_tensor)
-                mask = postprocess_mask(prediction)
-                
-                # Show results
-                st.subheader("🏁 Segmentation Result")
-                st.image(mask, use_container_width=True)
-                st.success(f"Inundation Analysis Complete")
+    cam1_source = st.text_input("Location 1 Camera Source", value="0")
+    cam2_source = st.text_input("Location 2 Camera Source", value="")
+    cam3_source = st.text_input("Location 3 Camera Source", value="")
+    cam4_source = st.text_input("Location 4 Camera Source", value="")
 
-    # --- SIDEBAR CONTROL PANEL ---
-    with st.sidebar:
-        st.header("🛠 Configuration")
-        lat = st.number_input("Target Latitude", value=7.2500, format="%.4f")
-        lon = st.number_input("Target Longitude", value=5.1950, format="%.4f")
-        
-        analyze_btn = st.button("🚀 Analyze Flood Risk")
-        
-        st.markdown("---")
-        with st.expander("🚀 Future Roadmap (Tech Debt)"):
-            st.write("• **Current:** CNN Segmentation (RGB).")
-            st.write("• **Phase 2:** Multi-temporal change detection (Wet vs. Dry).")
-            st.write("• **Phase 3:** Topographic Masking (Elevation/Slope) to filter out rivers.")
-            st.success("Target: High-Precision Risk Assessment.")
+st.title("🌊 AquaFlow CCTV Flood Monitoring System")
+st.write("Monitor flood-prone areas with live camera feeds and automatic flood alerts.")
 
-    # --- MAIN DASHBOARD AREA ---
-    if analyze_btn:
-        with st.spinner("🛰 Fetching and processing satellite data..."):
-            # 1. Fetch data from GEE
-            raw_image = fetch_sentinel_rgb(lat, lon)
-            
-            # 2. Model Prediction
-            model = load_flood_model()
-            input_tensor = preprocess_for_model(raw_image)
-            prediction = model.predict(input_tensor)
-            mask = postprocess_mask(prediction)
-            
-            # 3. Visualize
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("📡 Input: Sentinel-2 Feed")
-                st.image(raw_image, use_container_width=True)
-            with col2:
-                st.subheader("🏁 Output: AI Flood Mask")
-                binary_display = cv2.resize(mask, (512, 512), interpolation=cv2.INTER_NEAREST)
-                st.image(binary_display, use_container_width=True)
+# --- CAMERA SOURCES ---
+cams = {
+    "Location 1": cam1_source,
+    "Location 2": cam2_source,
+    "Location 3": cam3_source,
+    "Location 4": cam4_source
+}
 
-            # 4. Metrics
-            st.markdown("---")
-            m1, m2, m3 = st.columns(3)
-            flood_pixels = np.count_nonzero(mask)
-            m1.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            m1.metric("Inundation Area", f"{(flood_pixels/16384)*100:.2f}%")
-            m1.markdown('</div>', unsafe_allow_html=True)
-            m2.metric("Model Confidence", "94.8%")
-            m3.metric("Status", "Analysis Successful")
+# --- 2 x 2 GRID LAYOUT ---
+top_row = st.columns(2)
+bottom_row = st.columns(2)
 
-    else:
-        st.info("👈 Enter coordinates and click 'Analyze Flood Risk' to begin.")
-        m = folium.Map(location=[7.25, 5.20], zoom_start=12, tiles="CartoDB DarkMatter")
-        st_folium(m, width=1200, height=450)
+camera_layout = {
+    "Location 1": top_row[0],
+    "Location 2": top_row[1],
+    "Location 3": bottom_row[0],
+    "Location 4": bottom_row[1]
+}
 
-if __name__ == "__main__":
-    main()
+# --- PLACEHOLDERS ---
+placeholders = {}
+metrics = {}
+alerts = {}
+
+for name, column in camera_layout.items():
+    with column:
+        st.markdown('<div class="camera-card">', unsafe_allow_html=True)
+        st.subheader(f"📍 {name}")
+        placeholders[name] = st.empty()
+        metrics[name] = st.empty()
+        alerts[name] = st.empty()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+# --- LIVE LOOP ---
+while True:
+    for name, source in cams.items():
+
+        if source.strip() == "":
+            placeholders[name].info("📷 Camera not connected yet")
+            metrics[name].empty()
+            alerts[name].empty()
+            continue
+
+        frame = get_camera_frame(source)
+
+        if frame is None:
+            placeholders[name].warning("⚠ Unable to access camera")
+            metrics[name].empty()
+            alerts[name].empty()
+            continue
+
+        # --- MODEL INFERENCE ---
+        input_tensor = preprocess_for_model(frame)
+        prediction = model.predict(input_tensor, verbose=0)
+        mask = postprocess_mask(prediction)
+
+        # --- CREATE OVERLAY ---
+        mask_resized = cv2.resize(mask, (frame.shape[1], frame.shape[0]))
+        colored_mask = cv2.applyColorMap(mask_resized, cv2.COLORMAP_JET)
+        overlay = cv2.addWeighted(frame, 0.7, colored_mask, 0.3, 0)
+
+        overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
+
+        placeholders[name].image(
+            overlay_rgb,
+            caption=f"{name} - Live Flood Monitoring",
+            width=320
+        )
+
+        # --- FLOOD PERCENTAGE ---
+        flood_pct = (np.count_nonzero(mask) / mask.size) * 100
+
+        # --- ALERT LEVELS ---
+        if flood_pct >= 50:
+            metrics[name].error(f"🚨 CRITICAL FLOOD ALERT: {flood_pct:.2f}%")
+
+            alerts[name].markdown(
+                '''
+                <div style="
+                    background-color: rgba(255,0,0,0.2);
+                    border: 2px solid red;
+                    padding: 10px;
+                    border-radius: 10px;
+                    margin-top: 10px;
+                ">
+                <h4 style="color:red;">🚨 Emergency Flood Alert</h4>
+                <p style="color:white;">Automatic siren triggered for this location.</p>
+                </div>
+                ''',
+                unsafe_allow_html=True
+            )
+
+            try:
+                st.audio("siren.mp3")
+            except:
+                pass
+
+        elif flood_pct >= 30:
+            metrics[name].warning(f"⚠ HIGH FLOOD RISK: {flood_pct:.2f}%")
+            alerts[name].empty()
+
+        elif flood_pct >= 10:
+            metrics[name].info(f"⚠ Moderate Flood Risk: {flood_pct:.2f}%")
+            alerts[name].empty()
+
+        else:
+            metrics[name].success(f"✅ Safe: {flood_pct:.2f}%")
+            alerts[name].empty()
+
+    time.sleep(0.2)
