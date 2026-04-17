@@ -5,9 +5,7 @@ import cv2
 
 @st.cache_resource
 def open_camera(source):
-    """
-    Opens camera once and keeps it alive (important for Streamlit).
-    """
+   
     if str(source).isdigit():
         source = int(source)
 
@@ -16,9 +14,6 @@ def open_camera(source):
     return cap
 
 def get_camera_frame(source):
-    """
-    Reads a frame from an already opened camera.
-    """
 
     try:
         cap = open_camera(source)
